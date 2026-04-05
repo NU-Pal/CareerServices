@@ -11,9 +11,15 @@ from app.services.job_description.schemas import JobFitAnalysisData
 
 
 async def fetch_job_page_text(url: str, timeout: float = 20.0) -> str:
+    # Many job boards (LinkedIn, Indeed, etc.) block non-browser clients or return login walls.
+    # A browser-like User-Agent helps on some sites; others will still fail — users should paste the JD.
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; CareerServices/1.0; +https://huggingface.co)",
-        "Accept": "text/html,application/xhtml+xml",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
     }
     async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
         r = await client.get(url, headers=headers)
@@ -111,7 +117,12 @@ FIELD RULES:
 - skillsNote: Format EXACTLY as 'AI Reviewed [Total] priority keywords and confirmed [Matched] as covered.'
 - interviewFocus: Each item tied to real content in the JD or CV.
 - suggestedLearning: Each item must name a SPECIFIC resource (course + platform + time estimate).
-- redFlags: Short, plain sentence per concern. Empty array [] if none.
+- redFlags (PRIORITY — experience & career stage): This section must foreground hiring realism, not only missing tools. ALWAYS consider and call out when relevant:
+  - Seniority / years of experience: JD asks for mid-level, senior, lead, or "X+ years" but the CV reads as student, intern, new grad, or early-career only.
+  - Student vs professional track: still studying or mostly academic projects while the JD expects several years of industry experience or ownership of production systems.
+  - Leadership / people management / P&L / stakeholder depth required in the JD but absent or thin on the CV.
+  - "Expert / deep expertise" language in the JD vs coursework or junior exposure only on the CV.
+  Phrase each redFlag as a short direct sentence to "you" (e.g. "The role targets someone with several years in industry; your profile is still primarily academic — recruiters may see this as a stretch."). Put the strongest experience/seniority mismatch FIRST when it applies. You may add 1-2 tool/domain red flags after if critical. Include at least 1 redFlag when overallScore is below 78 OR matchStatus is "Stretch role" OR "Partial match", or whenever JD seniority clearly exceeds CV stage. If overallScore is 85+ AND seniority truly aligns, return [] or at most 1 minor watch-item.
 - recommendations: 3-5 HIGH-QUALITY, ACTIONABLE paragraphs addressing real gaps.
 
 Candidate CV (structured text):
@@ -138,7 +149,7 @@ RETURN ONLY VALID JSON — no markdown, no text outside JSON:
     "credentials": 0,
     "readiness":   0,
     "skillsNote":      "AI Reviewed X priority keywords and confirmed Y as covered.",
-    "experienceNote":  "Your exact professional experience vs JD requirement.",
+    "experienceNote":  "Direct comparison: years/seniority required by JD vs your roles, projects, and career stage (call out student vs experienced hire if relevant).",
     "domainNote":      "Your industry/domain alignment.",
     "credentialsNote": "Your degree status vs JD requirements.",
     "matchedSkills": [{{"skill": "...", "evidence": "...", "level": "Exposure | Practical | Advanced"}}],
@@ -146,7 +157,7 @@ RETURN ONLY VALID JSON — no markdown, no text outside JSON:
   }},
   "highlights": ["Unique strength 1", "Unique strength 2", "Unique strength 3"],
   "opportunities": ["Major gap 1 with why it matters", "Major gap 2"],
-  "redFlags": ["Short concern sentence. Empty array if none."],
+  "redFlags": ["First: seniority/experience gap if JD expects veteran hire and CV is student/junior; then other deal-breakers if any."],
   "recommendations": ["3-5 focused paragraphs addressing gaps or career growth."],
   "actionPlan": [{{"targetGap": "...", "expectedImpact": "...", "priority": "Critical | High | Medium | Low", "status": "Do now | Do soon | Do later"}}],
   "interviewFocus": ["Specific preparation tip tied to real JD/CV content."],

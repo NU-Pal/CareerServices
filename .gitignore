@@ -1,4 +1,4 @@
-# Environments
+# Environments — use real values only in .env (local) or HF Space secrets (hosted)
 .env
 .venv
 venv/
