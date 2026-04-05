@@ -7,6 +7,9 @@ class GenerateQuestionsRequest(BaseModel):
     topic: str
     difficulty: str | None = None
     questionCount: int | None = None
+    jobTitle: str | None = None
+    companyName: str | None = None
+    jobDescription: str | None = None
 
 
 class InterviewQuestionItem(BaseModel):
@@ -22,6 +25,9 @@ class GenerateFeedbackRequest(BaseModel):
     answers: list[Any] = Field(default_factory=list)
     bodyLanguageSummary: str | None = None
     bodyLanguageMetrics: Any = None
+    jobTitle: str | None = None
+    companyName: str | None = None
+    jobDescription: str | None = None
 
 
 class VoiceAgentRequest(BaseModel):

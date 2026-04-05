@@ -63,6 +63,8 @@ class JobFitAnalyzeRequest(BaseModel):
 class JobFitAnalyzeResponse(BaseModel):
     id: str
     analysis: dict[str, Any]
+    # Raw JD (paste or scraped) — used for job-specific technical interview prep
+    jobDescriptionText: str | None = None
 
 
 class JobFitHistoryItem(BaseModel):

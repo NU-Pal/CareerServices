@@ -62,7 +62,44 @@ async def generate_questions(
         diff_key = "advanced"
     ctx = difficulty_context.get(diff_key, difficulty_context["intermediate"])
 
-    prompt = f"""Generate {count} interview questions for a {body.topic} position ({diff_key} level).
+    jd = (body.jobDescription or "").strip()
+    role_label = (body.jobTitle or body.topic or "this role").strip()
+    company = (body.companyName or "").strip()
+
+    if jd:
+        jd_block = jd[:12_000]
+        company_line = f"Company: {company}\n" if company else ""
+        prompt = f"""Generate {count} interview questions for ONE specific job the candidate applied to.
+
+Role title: {role_label}
+{company_line}Difficulty style: {ctx} (aligned with what the JD implies for seniority)
+
+PRIMARY SOURCE — full job description (questions MUST be grounded in this text; avoid generic industry trivia unrelated to this posting):
+---
+{jd_block}
+---
+
+Rules:
+- Tie questions to responsibilities, tools, stack, domain, and seniority described in the JD.
+- Use categories such as Technical, Behavioral, Situational, Problem-Solving as appropriate for this role (not only coding).
+- Where the JD names technologies or processes, reference them in the question or context.
+- Do NOT ask generic "software engineering" questions that could apply to any company unless the JD is broadly SWE with no specifics.
+
+For each question, provide:
+1. The question text
+2. A category
+3. Optional context or scenario setup
+
+Return ONLY valid JSON in this format:
+[
+  {{
+    "question": "Question text here",
+    "category": "Category name",
+    "context": "Optional context or scenario"
+  }}
+]"""
+    else:
+        prompt = f"""Generate {count} interview questions for a {body.topic} position ({diff_key} level).
 
 Context: {ctx}
 
@@ -130,8 +167,17 @@ async def generate_feedback(
         for i, a in enumerate(body.answers)
     )
 
-    prompt = f"""Analyze this interview practice session for a {body.topic} position ({body.difficulty or 'intermediate'} level).
+    jd = (body.jobDescription or "").strip()
+    jd_block = ""
+    if jd:
+        jd_block = (
+            "\n\nJob description the candidate practiced for (use to judge relevance of answers):\n---\n"
+            + jd[:10_000]
+            + "\n---\n"
+        )
 
+    prompt = f"""Analyze this interview practice session for a {body.topic} position ({body.difficulty or 'intermediate'} level).
+{jd_block}
 {answers_text}
 {body_note}
 
@@ -202,11 +248,23 @@ async def voice_agent(
         topic = fd.get("topic") or "technical"
         half_min = max(1, int((float(fd.get("interviewDuration") or 15)) // 2))
         cv_text = fd.get("cvText") or ""
+        jd_text = (fd.get("jobDescription") or "").strip()
+
+        jd_section = ""
+        if jd_text:
+            jd_section = f"""
+You are interviewing for THIS specific job — not a generic {topic} screen. Read the job description below and ask questions a real hiring manager for this posting would ask: responsibilities, stack, domain, and seniority must match the JD. Do not pivot to unrelated generic trivia.
+
+JOB DESCRIPTION:
+---
+{jd_text[:14_000]}
+---
+"""
 
         system_prompt = f"""You are an experienced technical interviewer conducting a {level} interview for a {topic} position.
-
+{jd_section if jd_section else ""}
 Interview Guidelines:
-- Ask thoughtful, relevant questions appropriate for {level} candidates
+- Ask thoughtful, relevant questions appropriate for {level} candidates and the role above
 - Listen carefully to responses and ask follow-up questions
 - Be professional, encouraging, and constructive
 - Give the candidate time to think and respond
@@ -259,6 +317,14 @@ Start by warmly greeting the candidate and asking them to briefly introduce them
         fd = body.formData or {}
         topic = fd.get("topic") or "the role"
         level = fd.get("difficulty") or "intermediate"
+        jd_fb = (fd.get("jobDescription") or "").strip()
+        jd_note = ""
+        if jd_fb:
+            jd_note = (
+                "\n\nJob description context (candidate practiced for this specific posting):\n---\n"
+                + jd_fb[:10_000]
+                + "\n---\n"
+            )
         posture_block = ""
         if isinstance(body.bodyLanguageSummary, str) and body.bodyLanguageSummary.strip():
             posture_block = (
@@ -267,7 +333,7 @@ Start by warmly greeting the candidate and asking them to briefly introduce them
             )
 
         prompt = f"""Analyze this live voice interview practice for a {topic} position ({level} level).
-
+{jd_note}
 FULL TRANSCRIPT:
 {conversation_text}
 {posture_block}

@@ -79,17 +79,23 @@ async def analyze_job_fit(
 
     analysis_dict: dict[str, Any] = analysis.model_dump()
     job_url_to_store = job_url if job_url else "Manual Entry"
+    job_text_stored = job_text[:25_000]
 
     coll = job_fit_collection()
     now = datetime.now(timezone.utc)
     doc = {
         "StudentEmail": student_email,
         "JobUrl": job_url_to_store,
+        "JobText": job_text_stored,
         "AnalyzedAt": now,
         "AnalysisJson": json.dumps(analysis_dict),
     }
     res = await coll.insert_one(doc)
-    return JobFitAnalyzeResponse(id=str(res.inserted_id), analysis=analysis_dict)
+    return JobFitAnalyzeResponse(
+        id=str(res.inserted_id),
+        analysis=analysis_dict,
+        jobDescriptionText=job_text_stored,
+    )
 
 
 @router.get("/history", response_model=list[JobFitHistoryItem])
@@ -145,10 +151,17 @@ async def get_job_fit(
         analysis = {}
     at = record.get("AnalyzedAt")
     analyzed = at.isoformat() if hasattr(at, "isoformat") else str(at)
+    job_text = record.get("JobText")
+    if isinstance(job_text, str):
+        jd_text = job_text
+    else:
+        jd_text = None
+
     return {
         "id": str(record["_id"]),
         "analysis": analysis,
         "jobUrl": record.get("JobUrl") or "",
+        "jobDescriptionText": jd_text,
         "analyzedAt": analyzed,
     }
 
