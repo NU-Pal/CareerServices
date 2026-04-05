@@ -53,7 +53,9 @@ async def resume_history(
     student_email: Annotated[str, Depends(get_student_email)],
 ) -> list[ResumeHistoryItem]:
     coll = resume_collection()
-    cursor = coll.find({"StudentEmail": student_email}).sort("AnalyzedAt", -1)
+    import re
+    email_regex = {"$regex": f"^{re.escape(student_email)}$", "$options": "i"}
+    cursor = coll.find({"$or": [{"StudentEmail": email_regex}, {"studentEmail": email_regex}]}).sort("AnalyzedAt", -1)
     out: list[ResumeHistoryItem] = []
     async for doc in cursor:
         data = doc.get("Data") or {}
@@ -80,7 +82,9 @@ async def get_resume(
     if not ObjectId.is_valid(resume_id):
         raise HTTPException(status_code=404, detail="Resume not found")
     coll = resume_collection()
-    doc = await coll.find_one({"_id": ObjectId(resume_id), "StudentEmail": student_email})
+    import re
+    email_regex = {"$regex": f"^{re.escape(student_email)}$", "$options": "i"}
+    doc = await coll.find_one({"_id": ObjectId(resume_id), "$or": [{"StudentEmail": email_regex}, {"studentEmail": email_regex}]})
     if not doc:
         raise HTTPException(status_code=404, detail="Resume not found")
     api_data = dotnet_data_to_api_dict(doc.get("Data") or {})
@@ -96,6 +100,8 @@ async def delete_resume(
     if not ObjectId.is_valid(resume_id):
         raise HTTPException(status_code=404, detail="Resume not found")
     coll = resume_collection()
-    result = await coll.delete_one({"_id": ObjectId(resume_id), "StudentEmail": student_email})
+    import re
+    email_regex = {"$regex": f"^{re.escape(student_email)}$", "$options": "i"}
+    result = await coll.delete_one({"_id": ObjectId(resume_id), "$or": [{"StudentEmail": email_regex}, {"studentEmail": email_regex}]})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Resume not found")
