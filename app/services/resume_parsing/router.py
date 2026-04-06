@@ -17,6 +17,13 @@ from app.services.resume_parsing.service import extract_pdf_text, parse_resume_w
 router = APIRouter(prefix="/resume", tags=["resume"])
 
 
+def _pick(doc: dict, *keys: str):
+    for k in keys:
+        if k in doc and doc[k] is not None:
+            return doc[k]
+    return None
+
+
 @router.post("/parse", response_model=ParseResponse)
 async def parse_resume(
     _: Annotated[None, Depends(require_service_api_key)],
@@ -59,14 +66,14 @@ async def resume_history(
     docs = await list_resume_analyses(settings, authorization, student_email)
     out: list[ResumeHistoryItem] = []
     for doc in docs:
-        data = doc.get("Data") or {}
+        data = _pick(doc, "Data", "data") or {}
         api_data = dotnet_data_to_api_dict(data)
-        at = doc.get("AnalyzedAt")
+        at = _pick(doc, "AnalyzedAt", "analyzedAt")
         analyzed = str(at or "")
         out.append(
             ResumeHistoryItem(
-                id=str(doc.get("Id") or doc.get("id") or ""),
-                fileName=doc.get("FileName") or "",
+                id=str(_pick(doc, "Id", "id") or ""),
+                fileName=str(_pick(doc, "FileName", "fileName") or ""),
                 analyzedAt=analyzed,
                 fullName=api_data.get("fullName"),
             )
@@ -85,7 +92,7 @@ async def get_resume(
     doc = await get_resume_analysis(settings, authorization, student_email, resume_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Resume not found")
-    api_data = dotnet_data_to_api_dict(doc.get("Data") or {})
+    api_data = dotnet_data_to_api_dict(_pick(doc, "Data", "data") or {})
     return ParsedResume.model_validate(api_data)
 
 

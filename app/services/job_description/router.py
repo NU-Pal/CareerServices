@@ -24,6 +24,13 @@ from app.services.job_description.service import analyze_job_fit_llm, fetch_job_
 router = APIRouter(prefix="/resume/job-fit", tags=["job-fit"])
 
 
+def _pick(doc: dict, *keys: str):
+    for k in keys:
+        if k in doc and doc[k] is not None:
+            return doc[k]
+    return None
+
+
 async def _load_resume_for_student(
     settings: Settings,
     authorization: str | None,
@@ -34,7 +41,7 @@ async def _load_resume_for_student(
         doc = await get_resume_analysis(settings, authorization, student_email, resume_id)
         if not doc:
             raise HTTPException(status_code=404, detail="Resume not found")
-        return dotnet_data_to_api_dict(doc.get("Data") or {})
+        return dotnet_data_to_api_dict(_pick(doc, "Data", "data") or {})
     docs = await list_resume_analyses(settings, authorization, student_email)
     if not docs:
         raise HTTPException(
@@ -42,7 +49,7 @@ async def _load_resume_for_student(
             detail="No resume found for analysis. Please upload your resume first.",
         )
     newest = docs[0]
-    return dotnet_data_to_api_dict(newest.get("Data") or {})
+    return dotnet_data_to_api_dict(_pick(newest, "Data", "data") or {})
 
 
 @router.post("/analyze", response_model=JobFitAnalyzeResponse)
@@ -109,21 +116,21 @@ async def job_fit_history(
     docs = await list_job_fit_results(settings, authorization, student_email)
     out: list[JobFitHistoryItem] = []
     for doc in docs:
-        raw = doc.get("AnalysisJson") or "{}"
+        raw = _pick(doc, "AnalysisJson", "analysisJson") or "{}"
         try:
             data = json.loads(raw) if isinstance(raw, str) else {}
         except json.JSONDecodeError:
             data = {}
-        at = doc.get("AnalyzedAt")
+        at = _pick(doc, "AnalyzedAt", "analyzedAt")
         analyzed = at.isoformat() if hasattr(at, "isoformat") else str(at)
         out.append(
             JobFitHistoryItem(
-                id=str(doc.get("Id") or doc.get("id") or ""),
+                id=str(_pick(doc, "Id", "id") or ""),
                 jobTitle=data.get("jobTitle"),
                 companyName=data.get("companyName"),
                 overallScore=int(data.get("overallScore") or 0),
                 matchStatus=data.get("matchStatus"),
-                jobUrl=doc.get("JobUrl") or "",
+                jobUrl=str(_pick(doc, "JobUrl", "jobUrl") or ""),
                 analyzedAt=analyzed,
             )
         )
@@ -141,23 +148,23 @@ async def get_job_fit(
     record = await get_job_fit_result(settings, authorization, student_email, job_fit_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job fit not found")
-    raw = record.get("AnalysisJson") or "{}"
+    raw = _pick(record, "AnalysisJson", "analysisJson") or "{}"
     try:
         analysis = json.loads(raw) if isinstance(raw, str) else {}
     except json.JSONDecodeError:
         analysis = {}
-    at = record.get("AnalyzedAt")
+    at = _pick(record, "AnalyzedAt", "analyzedAt")
     analyzed = at.isoformat() if hasattr(at, "isoformat") else str(at)
-    job_text = record.get("JobText")
+    job_text = _pick(record, "JobText", "jobText")
     if isinstance(job_text, str):
         jd_text = job_text
     else:
         jd_text = None
 
     return {
-        "id": str(record.get("Id") or record.get("id") or ""),
+        "id": str(_pick(record, "Id", "id") or ""),
         "analysis": analysis,
-        "jobUrl": record.get("JobUrl") or "",
+        "jobUrl": str(_pick(record, "JobUrl", "jobUrl") or ""),
         "jobDescriptionText": jd_text,
         "analyzedAt": analyzed,
     }
