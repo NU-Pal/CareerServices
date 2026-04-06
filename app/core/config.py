@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     groq_api_key_2: str = ""     # Used by: AI interview (generate questions + feedback)
     deepgram_api_key: str = ""
     career_services_api_key: str = ""
-    mongo_url: str = ""
-    mongo_database: str = "nupal"
+    core_backend_url: str = ""
+    core_backend_api_key: str = ""
     cors_origins: str = "*"
     groq_model: str = "llama-3.3-70b-versatile"
 

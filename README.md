@@ -17,17 +17,18 @@ Three modules for **NUPAL**:
 | `app/services/job_description` | `/v1/resume/job-fit/*` | Job posting vs resume |
 | `app/services/ai_interview` | `/v1/interview/*` | Questions, feedback, voice agent |
 
-### One database with NUPAL.Core
+### Data access model
 
-Uses **MongoDB** with the same **`MONGO_URL`** and database name **`nupal`** as `NUPAL-Core-Services` (`resume_analyses`, `job_fit_results`). Documents follow the same shape as the C# entities (`StudentEmail`, `Data`, `AnalysisJson`, …).
+`CareerServices` does **not** connect to MongoDB directly.  
+It persists and reads resume/job-fit data through authenticated backend APIs in `NUPAL-Core-Services` (`/api/career-data/*`).
 
 ### Environment variables
 
 See **`.env.example`** (explains `CAREER_SERVICES_API_KEY` and `CORS_ORIGINS`).
 
 - **`GROQ_API_KEY`** — same role as **`GroqApiKey`** in the .NET API; one Groq key is enough for all services (create/revoke keys in [Groq Console](https://console.groq.com)).
-- **`MONGO_URL`** — same as **`MONGO_URL`** in `appsettings` / user secrets for NUPAL.Core.Api.
-- **`MONGO_DATABASE`** — default `nupal` (must match `GetDatabase("nupal")` in .NET).
+- **`CORE_BACKEND_URL`** — base URL for `NUPAL-Core-Services` (for example `http://localhost:5009`).
+- **`CORE_BACKEND_API_KEY`** — optional extra service key sent as `X-Core-Api-Key` when your backend expects it.
 - **`DEEPGRAM_API_KEY`** — only for live voice interview.
 - **`CAREER_SERVICES_API_KEY`** — optional shared secret; your Next.js proxy sends `X-API-Key`.
 

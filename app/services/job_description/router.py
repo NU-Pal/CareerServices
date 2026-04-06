@@ -1,13 +1,18 @@
 import json
-from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from app.core.config import Settings, get_settings
+from app.core.core_backend_client import (
+    create_job_fit_result,
+    get_resume_analysis,
+    list_job_fit_results,
+    delete_job_fit_result,
+    get_job_fit_result,
+    list_resume_analyses,
+)
 from app.core.dotnet_mongo_bridge import dotnet_data_to_api_dict
-from app.core.mongo_db import job_fit_collection, resume_collection
 from app.core.security import get_student_email, require_service_api_key
 from app.services.job_description.schemas import (
     JobFitAnalyzeRequest,
@@ -20,27 +25,24 @@ router = APIRouter(prefix="/resume/job-fit", tags=["job-fit"])
 
 
 async def _load_resume_for_student(
+    settings: Settings,
+    authorization: str | None,
     student_email: str,
     resume_id: str | None,
 ) -> dict[str, Any]:
-    coll = resume_collection()
-    import re
-    email_regex = {"$regex": f"^{re.escape(student_email)}$", "$options": "i"}
     if resume_id:
-        if not ObjectId.is_valid(resume_id):
-            raise HTTPException(status_code=404, detail="Resume not found")
-        doc = await coll.find_one({"_id": ObjectId(resume_id), "$or": [{"StudentEmail": email_regex}, {"studentEmail": email_regex}]})
+        doc = await get_resume_analysis(settings, authorization, student_email, resume_id)
         if not doc:
             raise HTTPException(status_code=404, detail="Resume not found")
         return dotnet_data_to_api_dict(doc.get("Data") or {})
-    cursor = coll.find({"$or": [{"StudentEmail": email_regex}, {"studentEmail": email_regex}]}).sort("AnalyzedAt", -1).limit(1)
-    docs = await cursor.to_list(1)
+    docs = await list_resume_analyses(settings, authorization, student_email)
     if not docs:
         raise HTTPException(
             status_code=400,
             detail="No resume found for analysis. Please upload your resume first.",
         )
-    return dotnet_data_to_api_dict(docs[0].get("Data") or {})
+    newest = docs[0]
+    return dotnet_data_to_api_dict(newest.get("Data") or {})
 
 
 @router.post("/analyze", response_model=JobFitAnalyzeResponse)
@@ -49,6 +51,7 @@ async def analyze_job_fit(
     student_email: Annotated[str, Depends(get_student_email)],
     settings: Annotated[Settings, Depends(get_settings)],
     body: JobFitAnalyzeRequest,
+    authorization: str | None = Header(None),
 ) -> JobFitAnalyzeResponse:
     if not (body.jobUrl or "").strip() and not (body.jobDescription or "").strip():
         raise HTTPException(
@@ -69,7 +72,7 @@ async def analyze_job_fit(
     if not job_text:
         raise HTTPException(status_code=400, detail="Provide jobDescription or a reachable jobUrl")
 
-    api_resume = await _load_resume_for_student(student_email, body.resumeId)
+    api_resume = await _load_resume_for_student(settings, authorization, student_email, body.resumeId)
     resume_blob = resume_to_text_blob(api_resume)
 
     try:
@@ -81,18 +84,16 @@ async def analyze_job_fit(
     job_url_to_store = job_url if job_url else "Manual Entry"
     job_text_stored = job_text[:25_000]
 
-    coll = job_fit_collection()
-    now = datetime.now(timezone.utc)
-    doc = {
-        "StudentEmail": student_email,
-        "JobUrl": job_url_to_store,
-        "JobText": job_text_stored,
-        "AnalyzedAt": now,
-        "AnalysisJson": json.dumps(analysis_dict),
-    }
-    res = await coll.insert_one(doc)
+    new_id = await create_job_fit_result(
+        settings,
+        authorization,
+        student_email,
+        job_url=job_url_to_store,
+        job_text=job_text_stored,
+        analysis_json=json.dumps(analysis_dict),
+    )
     return JobFitAnalyzeResponse(
-        id=str(res.inserted_id),
+        id=new_id,
         analysis=analysis_dict,
         jobDescriptionText=job_text_stored,
     )
@@ -102,13 +103,12 @@ async def analyze_job_fit(
 async def job_fit_history(
     _: Annotated[None, Depends(require_service_api_key)],
     student_email: Annotated[str, Depends(get_student_email)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: str | None = Header(None),
 ) -> list[JobFitHistoryItem]:
-    coll = job_fit_collection()
-    import re
-    email_regex = {"$regex": f"^{re.escape(student_email)}$", "$options": "i"}
-    cursor = coll.find({"$or": [{"StudentEmail": email_regex}, {"studentEmail": email_regex}]}).sort("AnalyzedAt", -1)
+    docs = await list_job_fit_results(settings, authorization, student_email)
     out: list[JobFitHistoryItem] = []
-    async for doc in cursor:
+    for doc in docs:
         raw = doc.get("AnalysisJson") or "{}"
         try:
             data = json.loads(raw) if isinstance(raw, str) else {}
@@ -118,7 +118,7 @@ async def job_fit_history(
         analyzed = at.isoformat() if hasattr(at, "isoformat") else str(at)
         out.append(
             JobFitHistoryItem(
-                id=str(doc["_id"]),
+                id=str(doc.get("Id") or doc.get("id") or ""),
                 jobTitle=data.get("jobTitle"),
                 companyName=data.get("companyName"),
                 overallScore=int(data.get("overallScore") or 0),
@@ -135,13 +135,10 @@ async def get_job_fit(
     job_fit_id: str,
     _: Annotated[None, Depends(require_service_api_key)],
     student_email: Annotated[str, Depends(get_student_email)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: str | None = Header(None),
 ) -> dict[str, Any]:
-    if not ObjectId.is_valid(job_fit_id):
-        raise HTTPException(status_code=404, detail="Job fit not found")
-    coll = job_fit_collection()
-    import re
-    email_regex = {"$regex": f"^{re.escape(student_email)}$", "$options": "i"}
-    record = await coll.find_one({"_id": ObjectId(job_fit_id), "$or": [{"StudentEmail": email_regex}, {"studentEmail": email_regex}]})
+    record = await get_job_fit_result(settings, authorization, student_email, job_fit_id)
     if not record:
         raise HTTPException(status_code=404, detail="Job fit not found")
     raw = record.get("AnalysisJson") or "{}"
@@ -158,7 +155,7 @@ async def get_job_fit(
         jd_text = None
 
     return {
-        "id": str(record["_id"]),
+        "id": str(record.get("Id") or record.get("id") or ""),
         "analysis": analysis,
         "jobUrl": record.get("JobUrl") or "",
         "jobDescriptionText": jd_text,
@@ -171,12 +168,7 @@ async def delete_job_fit(
     job_fit_id: str,
     _: Annotated[None, Depends(require_service_api_key)],
     student_email: Annotated[str, Depends(get_student_email)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    authorization: str | None = Header(None),
 ) -> None:
-    if not ObjectId.is_valid(job_fit_id):
-        raise HTTPException(status_code=404, detail="Job fit not found")
-    coll = job_fit_collection()
-    import re
-    email_regex = {"$regex": f"^{re.escape(student_email)}$", "$options": "i"}
-    result = await coll.delete_one({"_id": ObjectId(job_fit_id), "$or": [{"StudentEmail": email_regex}, {"studentEmail": email_regex}]})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Job fit not found")
+    await delete_job_fit_result(settings, authorization, student_email, job_fit_id)
