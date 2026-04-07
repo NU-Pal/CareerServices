@@ -9,11 +9,21 @@ from app.services.resume_parsing.router import router as resume_router
 settings = get_settings()
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()] if settings.cors_origins != "*" else ["*"]
 
+from fastapi.responses import JSONResponse
+from fastapi import Request
+
 app = FastAPI(
     title="Career Services API",
     description="Resume parsing, job fit analysis, and AI interview endpoints for NUPAL (data persistence via NUPAL-Core backend APIs).",
     version="1.1.0",
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": "Internal Server Error", "message": str(exc)},
+    )
 
 app.add_middleware(
     CORSMiddleware,

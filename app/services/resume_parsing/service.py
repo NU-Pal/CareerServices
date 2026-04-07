@@ -6,6 +6,7 @@ from groq import Groq
 from pypdf import PdfReader
 
 from app.core.config import Settings
+from app.core.groq_helpers import call_groq_with_fallback
 from app.services.resume_parsing.schemas import ParsedResume
 
 _PROMPT_TEMPLATE = """You are a professional resume parser. Your goal is to extract ALL information from the provided resume text with 100% accuracy.
@@ -92,13 +93,10 @@ def _strip_json_fence(raw: str) -> str:
 
 
 def parse_resume_with_llm(settings: Settings, raw_text: str) -> ParsedResume:
-    if not settings.groq_api_key:
-        raise RuntimeError("GROQ_API_KEY is not configured")
-
-    client = Groq(api_key=settings.groq_api_key)
     prompt = _PROMPT_TEMPLATE.format(resume_text=raw_text)
 
-    completion = client.chat.completions.create(
+    completion = call_groq_with_fallback(
+        settings=settings,
         model="llama-3.1-8b-instant",   # fast + accurate for structured extraction
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,

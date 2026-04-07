@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from groq import Groq
 
 from app.core.config import Settings, get_settings
+from app.core.groq_helpers import call_groq_with_fallback
 from app.core.security import require_service_api_key
 from app.services.ai_interview.posture import merge_posture_into_feedback
 from app.services.ai_interview.schemas import (
@@ -29,7 +30,13 @@ async def voice_agent_get_api_key(
 
 
 def _strip_json_fence(raw: str) -> str:
+    """Robustly extracts JSON from a string that might contain markdown or extra text."""
     s = raw.strip()
+    # Try to find the first '{' and last '}' to isolate potential JSON
+    match = re.search(r"(\{.*\}|\[.*\])", s, re.DOTALL)
+    if match:
+        return match.group(0)
+    
     s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
     s = re.sub(r"\s*```$", "", s)
     return s.strip()
@@ -117,8 +124,9 @@ Return ONLY valid JSON in this format:
   }}
 ]"""
 
-    client = Groq(api_key=interview_api_key)
-    completion = client.chat.completions.create(
+    completion = call_groq_with_fallback(
+        settings=settings,
+        model=settings.groq_model,
         messages=[
             {
                 "role": "system",
@@ -129,14 +137,18 @@ Return ONLY valid JSON in this format:
             },
             {"role": "user", "content": prompt},
         ],
-        model=settings.groq_model,
         temperature=0.7,
         max_tokens=2000,
     )
+    
     response = completion.choices[0].message.content
     if not response:
         raise HTTPException(status_code=502, detail="Empty model response")
-    questions = json.loads(_strip_json_fence(response))
+    try:
+        questions = json.loads(_strip_json_fence(response))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Failed to parse AI questions as JSON")
+    
     if not isinstance(questions, list):
         raise HTTPException(status_code=502, detail="Invalid questions format")
     return {"success": True, "questions": questions}
@@ -181,21 +193,21 @@ async def generate_feedback(
 {answers_text}
 {body_note}
 
-Provide constructive feedback in JSON format:
+Provide professional feedback in JSON format:
 {{
-  "overall": "2-3 sentence assessment: lead with answers; use POSE METRICS only if present — follow RULES in that block, no generic body-language praise.",
-  "bodyLanguageComment": "3-5 sentences. When POSE METRICS exist, cite averages or percentages. Do NOT claim strong eye contact unless metrics allow. If NO_POSE_DATA, state posture was not measured.",
+  "overall": "3-4 sentences: A professional 'Hire/No-Hire' debrief tone. Direct, mentor-like, focusing on Day-1 Readiness. Be encouraging but honest.",
+  "bodyLanguageComment": "3-5 sentences. Be very strict about fidgeting or lack of focus based on POSE METRICS, but explain WHY it affects professional perception.",
   "questionFeedback": [
     {{
       "question": "Question text",
-      "strengths": "What was done well",
-      "improvements": "What could be improved"
+      "strengths": "What was technically sound or logically clear",
+      "improvements": "Identify EXACTLY what technical concept was missed, vague, or wrong. No fluff."
     }}
   ],
   "recommendations": [
-    "Specific actionable recommendation 1",
-    "Specific actionable recommendation 2",
-    "Specific actionable recommendation 3"
+    "Primary technical gap to bridge",
+    "Communication/structure improvement based on transcript",
+    "Professional presence adjustment"
   ],
   "scores": {{
     "technical": 0,
@@ -204,29 +216,33 @@ Provide constructive feedback in JSON format:
   }}
 }}
 
-Rules: scores are integers 0-100. "presence" must align with pose metrics when provided (lower if facing/symmetry/headPitch averages are poor per RULES in the metrics block).
+Rules: scores are integers 0-100. "presence" must strictly reflect pose metrics when provided.
 
 Return ONLY the JSON object, no markdown formatting."""
 
-    client = Groq(api_key=interview_api_key)
-    completion = client.chat.completions.create(
+    completion = call_groq_with_fallback(
+        settings=settings,
+        model=settings.groq_model,
         messages=[
             {
                 "role": "system",
                 "content": (
-                    "You are a rigorous interview coach. You do not contradict numeric pose data with vague compliments. "
-                    "Return only valid JSON without markdown code blocks."
+                    "You are a Head of Engineering and Mentor. You prioritize technical depth and strictly interpret pose metrics. "
+                    "You provide professional, honest 'Post-Interview Debrief' style feedback."
                 ),
             },
             {"role": "user", "content": prompt},
         ],
-        model=settings.groq_model,
         temperature=0.35,
         max_tokens=3000,
     )
+        
     response = completion.choices[0].message.content or ""
-    response = _strip_json_fence(response.replace("```json\n", "").replace("```", ""))
-    feedback = json.loads(response)
+    try:
+        feedback = json.loads(response)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="Failed to parse AI feedback as JSON")
+        
     if isinstance(feedback, dict):
         merge_posture_into_feedback(feedback, body.bodyLanguageMetrics)
     return {"success": True, "feedback": feedback}
@@ -332,24 +348,26 @@ Start by warmly greeting the candidate and asking them to briefly introduce them
                 + body.bodyLanguageSummary.strip()
             )
 
-        prompt = f"""Analyze this live voice interview practice for a {topic} position ({level} level).
+        prompt = f"""You are a Head of Engineering and Mentor. Analyze this live voice interview for a {topic} position ({level} level).
 {jd_note}
 FULL TRANSCRIPT:
 {conversation_text}
 {posture_block}
 
+Your tone must be EMPOWERING and SUPPORTIVE, yet surgically DIRECT and STRICT regarding technical inaccuracies or vague explanations.
+
 Return JSON only (no markdown) in this exact shape:
 {{
-  "overall": "2-3 sentence assessment: prioritize transcript; reference posture ONLY using the numeric rules in the POSE METRICS block — never generic praise.",
-  "bodyLanguageComment": "3-5 sentences. MUST reference specific averages or percentages from POSE METRICS when that block is present. If rules forbid claiming strong eye contact, do not claim it. If averages are weak, say so clearly. If NO_POSE_DATA, say posture was not measured.",
+  "overall": "3-4 sentences: A professional 'Hire/No-Hire' debrief tone. Direct, mentor-like, focusing on Day-1 Readiness. Be encouraging but honest.",
+  "bodyLanguageComment": "3-5 sentences. Be very strict about fidgeting or lack of focus based on metrics, but explain WHY it affects professional perception.",
   "questionFeedback": [
     {{
       "question": "Question text",
-      "strengths": "What went well",
-      "improvements": "What to improve"
+      "strengths": "What was technically sound or logically clear",
+      "improvements": "Identify EXACTLY what technical concept was missed, vague, or wrong. No fluff."
     }}
   ],
-  "recommendations": ["tip 1", "tip 2", "tip 3"],
+  "recommendations": ["Primary technical gap to bridge", "Communication/structure improvement", "Professional presence adjustment"],
   "scores": {{
     "technical": 0,
     "communication": 0,
@@ -357,29 +375,33 @@ Return JSON only (no markdown) in this exact shape:
   }}
 }}
 
-scores: integers 0-100. "presence" must reflect BOTH voice and (when given) pose metrics — lower presence if facing/headPitch/symmetry averages are poor per the RULES in the metrics block.
+scores: integers 0-100. "presence" must reflect BOTH voice and (when given) pose metrics.
 
 Return ONLY the JSON object."""
 
-        client = Groq(api_key=interview_api_key)
-        completion = client.chat.completions.create(
+        completion = call_groq_with_fallback(
+            settings=settings,
+            model=settings.groq_model,
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You are a rigorous interview coach. You never give vague encouragement about body language "
-                        "when numeric pose data contradicts it. Return only valid JSON, no markdown."
+                    "You are a Head of Engineering and Mentor. You prioritize technical depth and strictly interpret pose metrics. "
+                    "You provide professional, honest 'Post-Interview Debrief' style feedback."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
-            model=settings.groq_model,
             temperature=0.35,
             max_tokens=3200,
         )
+            
         response = completion.choices[0].message.content or ""
-        response = _strip_json_fence(response.replace("```json\n", "").replace("```", ""))
-        feedback = json.loads(response)
+        try:
+            feedback = json.loads(response)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="Failed to parse AI voice feedback as JSON")
+            
         if isinstance(feedback, dict):
             merge_posture_into_feedback(feedback, body.bodyLanguageMetrics)
         return {"success": True, "feedback": feedback}

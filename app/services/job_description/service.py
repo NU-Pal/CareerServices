@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from groq import Groq
 
 from app.core.config import Settings
+from app.core.groq_helpers import call_groq_with_fallback
 from app.services.job_description.schemas import JobFitAnalysisData
 
 
@@ -166,13 +167,14 @@ RETURN ONLY VALID JSON — no markdown, no text outside JSON:
 """
 
 
-def _call_groq(client: Groq, model: str, prompt: str, json_mode: bool, max_tokens: int) -> str:
-    completion = client.chat.completions.create(
+def _call_groq(settings: Settings, model: str, prompt: str, json_mode: bool, max_tokens: int) -> str:
+    completion = call_groq_with_fallback(
+        settings=settings,
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
         max_tokens=max_tokens,
-        **({"response_format": {"type": "json_object"}} if json_mode else {}),
+        response_format={"type": "json_object"} if json_mode else None,
     )
     content = completion.choices[0].message.content
     if not content:
@@ -185,21 +187,16 @@ def analyze_job_fit_llm(
     resume_summary: str,
     job_text: str,
 ) -> JobFitAnalysisData:
-    if not settings.groq_api_key:
-        raise RuntimeError("GROQ_API_KEY is not configured")
-
-    client = Groq(api_key=settings.groq_api_key)
-
     # Step 1: Summarise / extract JD with fast 8B model (saves TPM)
     jd_extraction_prompt = _JD_EXTRACTION_PROMPT.format(job_text=job_text[:8_000])
-    extracted_jd = _call_groq(client, "llama-3.1-8b-instant", jd_extraction_prompt, False, 1500)
+    extracted_jd = _call_groq(settings, "llama-3.1-8b-instant", jd_extraction_prompt, False, 1500)
 
     # Step 2: Deep analysis with powerful 70B model
     analysis_prompt = _JOB_FIT_PROMPT.format(
         resume_summary=resume_summary[:12_000],
         job_text=extracted_jd,
     )
-    raw = _call_groq(client, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)
+    raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)
 
     data = json.loads(_strip_json_fence(raw))
     return JobFitAnalysisData.model_validate(data)
