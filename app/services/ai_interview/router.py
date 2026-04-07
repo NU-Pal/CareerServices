@@ -196,7 +196,7 @@ async def generate_feedback(
 Provide professional feedback in JSON format:
 {{
   "overall": "3-4 sentences: A professional 'Hire/No-Hire' debrief tone. Direct, mentor-like, focusing on Day-1 Readiness. Be encouraging but honest.",
-  "bodyLanguageComment": "3-5 sentences. Be very strict about fidgeting or lack of focus based on POSE METRICS, but explain WHY it affects professional perception.",
+  "bodyLanguageComment": "3-5 sentences. Translate metrics into human advice. DO NOT output percentages, standard deviations, or technical labels like 'mean symmetry'. Instead of '70% facing', say 'You seemed to look away from the camera'. Be strict but realistic.",
   "questionFeedback": [
     {{
       "question": "Question text",
@@ -359,7 +359,7 @@ Your tone must be EMPOWERING and SUPPORTIVE, yet surgically DIRECT and STRICT re
 Return JSON only (no markdown) in this exact shape:
 {{
   "overall": "3-4 sentences: A professional 'Hire/No-Hire' debrief tone. Direct, mentor-like, focusing on Day-1 Readiness. Be encouraging but honest.",
-  "bodyLanguageComment": "3-5 sentences. Be very strict about fidgeting or lack of focus based on metrics, but explain WHY it affects professional perception.",
+  "bodyLanguageComment": "3-5 sentences. Translate metrics into human advice. DO NOT output percentages, standard deviations, or technical labels like 'mean symmetry'. Instead of '70% facing', say 'You seemed to look away from the camera'. Be strict but realistic.",
   "questionFeedback": [
     {{
       "question": "Question text",
