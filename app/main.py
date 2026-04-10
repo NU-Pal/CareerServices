@@ -18,19 +18,19 @@ app = FastAPI(
     version="1.1.0",
 )
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={"success": False, "error": "Internal Server Error", "message": str(exc)},
-    )
-
 from starlette.exceptions import HTTPException as StarletteHTTPException
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"success": False, "error": exc.detail},
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": "Internal Server Error", "message": str(exc)},
     )
 
 app.add_middleware(
