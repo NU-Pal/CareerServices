@@ -39,12 +39,15 @@ async def parse_resume(
         raise HTTPException(status_code=400, detail="File too large (max 10MB)")
     try:
         raw = extract_pdf_text(body)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read PDF: {str(e)}") from e
+    
     try:
         data = parse_resume_with_llm(settings, raw)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM parsing failed: {str(e)}") from e
 
     resume_id = await create_resume_analysis(
         settings,

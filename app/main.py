@@ -25,6 +25,14 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"success": False, "error": "Internal Server Error", "message": str(exc)},
     )
 
+from starlette.exceptions import HTTPException as StarletteHTTPException
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "error": exc.detail},
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins if origins != ["*"] else ["*"],
