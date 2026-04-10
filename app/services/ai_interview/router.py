@@ -18,16 +18,49 @@ from app.services.ai_interview.schemas import (
 router = APIRouter(prefix="/interview", tags=["interview"])
 
 
+import httpx
+
 @router.get("/voice-agent")
 async def voice_agent_get_api_key(
     _: Annotated[None, Depends(require_service_api_key)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> dict[str, Any]:
-    """Same contract as legacy GET /api/interview/voice-agent — returns Deepgram client key."""
+    """Dynamically generates a short-lived (60s) temporary Deepgram API key for the browser."""
     if not settings.deepgram_api_key:
         raise HTTPException(status_code=503, detail="DEEPGRAM_API_KEY is not configured")
-    return {"success": True, "apiKey": settings.deepgram_api_key}
-
+        
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # 1. Discover the Project ID associated with the master key
+            headers = {"Authorization": f"Token {settings.deepgram_api_key}"}
+            proj_res = await client.get("https://api.deepgram.com/v1/projects", headers=headers)
+            proj_res.raise_for_status()
+            projects = proj_res.json().get("projects", [])
+            if not projects:
+                raise ValueError("No Deepgram projects found for this key")
+            project_id = projects[0]["project_id"]
+            
+            # 2. Generate a temporary key with a 60-second TTL
+            payload = {
+                "comment": "Temp browser key for voice agent",
+                "scopes": ["usage:write"],
+                "time_to_live_in_seconds": 60
+            }
+            key_res = await client.post(
+                f"https://api.deepgram.com/v1/projects/{project_id}/keys",
+                headers=headers,
+                json=payload
+            )
+            key_res.raise_for_status()
+            temp_key = key_res.json().get("key")
+            
+            if not temp_key:
+                raise ValueError("Failed to generate temp key")
+                
+            return {"success": True, "apiKey": temp_key}
+            
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to generate secure voice token: {str(e)}")
 
 def _strip_json_fence(raw: str) -> str:
     """Robustly extracts JSON from a string that might contain markdown or extra text."""
