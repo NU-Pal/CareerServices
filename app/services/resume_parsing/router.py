@@ -9,7 +9,7 @@ from app.core.core_backend_client import (
     get_resume_analysis,
     list_resume_analyses,
 )
-from app.core.dotnet_mongo_bridge import api_dict_to_dotnet_data, dotnet_data_to_api_dict
+from app.core.dotnet_mongo_bridge import dotnet_data_to_api_dict
 from app.core.security import get_student_email, require_service_api_key
 from app.services.resume_parsing.schemas import ParseResponse, ParsedResume, ResumeHistoryItem
 from app.services.resume_parsing.service import extract_pdf_text, parse_resume_with_llm
@@ -54,7 +54,8 @@ async def parse_resume(
         authorization,
         student_email,
         file_name=file.filename,
-        data=api_dict_to_dotnet_data(data.model_dump(mode="json")),
+        # C# ResumeData uses [JsonPropertyName("camelCase")] – send camelCase directly
+        data=data.model_dump(mode="json"),
     )
     return ParseResponse(id=resume_id, data=data)
 
