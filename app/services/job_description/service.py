@@ -285,7 +285,7 @@ async def analyze_job_fit_llm(
     jd_extraction_prompt = _JD_EXTRACTION_PROMPT.format(job_text=job_text[:8_000])
     extracted_jd = _call_groq(settings, "llama-3.1-8b-instant", jd_extraction_prompt, False, 1500)
 
-    learning_query = job_text.replace("\n", " ").strip()[:400] or "job preparation" 
+    learning_query = extracted_jd.replace("\n", " ").strip()[:400] or "job preparation" 
     learning_resources = await search_learning_resources(settings, learning_query, max_results=6)
     print(f"[DEBUG] Learning query: {learning_query}")
     print(f"[DEBUG] Found {len(learning_resources)} learning resources")
