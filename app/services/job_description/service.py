@@ -312,9 +312,7 @@ async def analyze_job_fit_llm(
         "weave in specific learning resources with direct links. "
         "For each skill gap or area for improvement, add a sentence like: "
         "'To improve in [skill], try [Resource Title] at [URL]'. "
-        "Make recommendations ACTIONABLE and resource-rich. "
-        ""\n
-"
+        "Make recommendations ACTIONABLE and resource-rich.\n"
         f"{learning_resources_text}"
     )
     raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)
