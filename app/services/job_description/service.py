@@ -286,26 +286,21 @@ async def analyze_job_fit_llm(
     extracted_jd = _call_groq(settings, "llama-3.1-8b-instant", jd_extraction_prompt, False, 1500)
 
     learning_query = extracted_jd.replace("\n", " ").strip()[:400] or "job preparation" 
-    learning_resources = await search_learning_resources(settings, learning_query, max_results=6)
-    print(f"[DEBUG] Learning query: {learning_query}")
-    print(f"[DEBUG] Found {len(learning_resources)} learning resources")
-    for res in learning_resources:
-        print(f"[DEBUG] Resource: {res['title']} - {res['url']}")
+    learning_resources = await search_learning_resources(settings, learning_query, max_results=10)
     
-    learning_resources_text = "No external learning resources were found."
+    # Build a mapping of skill -> resources ONLY if we actually found resources
+    skill_resources_map = {}
     if learning_resources:
-        learning_resources_text = "Here are some verified learning resources to support this role:\n"
+        for res in learning_resources:
+            skill_resources_map[res['title']] = res['url']
+    
+    # Format resources as a prompt instruction
+    learning_resources_text = ""
+    if skill_resources_map:
+        learning_resources_text = "Here are learning resources to weave into recommendations:\n"
         learning_resources_text += "\n".join(
-            [f"{idx + 1}. {item['title']} ({item['source']}) - {item['url']}" for idx, item in enumerate(learning_resources)]
+            [f"- {title}: {url}" for title, url in skill_resources_map.items()]
         )
-    else:
-        # Fallback: Add some generic resources if search fails
-        fallback_resources = [
-            "Python for Everybody - Coursera - https://www.coursera.org/specializations/python",
-            "JavaScript Algorithms and Data Structures - freeCodeCamp - https://www.freecodecamp.org/learn/javascript-algorithms-and-data-structures/",
-            "React Tutorial - YouTube - https://www.youtube.com/watch?v=bMknfKXIFA8",
-        ]
-        learning_resources_text = "Here are some general learning resources (search may have failed):\n" + "\n".join(fallback_resources)
 
     # Step 2: Deep analysis with powerful 70B model
     analysis_prompt = _JOB_FIT_PROMPT.format(
@@ -313,9 +308,13 @@ async def analyze_job_fit_llm(
         job_text=extracted_jd,
     )
     analysis_prompt += "\n\n" + (
-        "Use these actual learning resources to make your suggestedLearning recommendations. "
-        "Include 3-5 of these exact titles and URLs in suggestedLearning, even if they are general. "
-        "Format each as: 'Resource Title - Platform - https://url'\n"
+        "IMPORTANT: When you write your recommendations in the 'recommendations' field, "
+        "weave in specific learning resources with direct links. "
+        "For each skill gap or area for improvement, add a sentence like: "
+        "'To improve in [skill], try [Resource Title] at [URL]'. "
+        "Make recommendations ACTIONABLE and resource-rich. "
+        ""\n
+"
         f"{learning_resources_text}"
     )
     raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)
