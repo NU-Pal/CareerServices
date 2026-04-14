@@ -287,12 +287,25 @@ async def analyze_job_fit_llm(
 
     learning_query = job_text.replace("\n", " ").strip()[:400] or "job preparation" 
     learning_resources = await search_learning_resources(settings, learning_query, max_results=6)
+    print(f"[DEBUG] Learning query: {learning_query}")
+    print(f"[DEBUG] Found {len(learning_resources)} learning resources")
+    for res in learning_resources:
+        print(f"[DEBUG] Resource: {res['title']} - {res['url']}")
+    
     learning_resources_text = "No external learning resources were found."
     if learning_resources:
         learning_resources_text = "Here are some verified learning resources to support this role:\n"
         learning_resources_text += "\n".join(
             [f"{idx + 1}. {item['title']} ({item['source']}) - {item['url']}" for idx, item in enumerate(learning_resources)]
         )
+    else:
+        # Fallback: Add some generic resources if search fails
+        fallback_resources = [
+            "Python for Everybody - Coursera - https://www.coursera.org/specializations/python",
+            "JavaScript Algorithms and Data Structures - freeCodeCamp - https://www.freecodecamp.org/learn/javascript-algorithms-and-data-structures/",
+            "React Tutorial - YouTube - https://www.youtube.com/watch?v=bMknfKXIFA8",
+        ]
+        learning_resources_text = "Here are some general learning resources (search may have failed):\n" + "\n".join(fallback_resources)
 
     # Step 2: Deep analysis with powerful 70B model
     analysis_prompt = _JOB_FIT_PROMPT.format(
@@ -301,8 +314,8 @@ async def analyze_job_fit_llm(
     )
     analysis_prompt += "\n\n" + (
         "Use these actual learning resources to make your suggestedLearning recommendations. "
-        "If they are relevant, include 3-5 of these exact titles and URLs in suggestedLearning. "
-        "Do not invent other URLs. If a resource is not useful, omit it.\n"
+        "Include 3-5 of these exact titles and URLs in suggestedLearning, even if they are general. "
+        "Format each as: 'Resource Title - Platform - https://url'\n"
         f"{learning_resources_text}"
     )
     raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)

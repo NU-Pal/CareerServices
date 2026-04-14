@@ -106,6 +106,20 @@ async def analyze_job_fit(
     )
 
 
+@router.get("/test-search")
+async def test_learning_search(
+    settings: Annotated[Settings, Depends(get_settings)],
+    query: str = "python developer",
+) -> dict[str, Any]:
+    """Test endpoint to check if learning resource search is working."""
+    resources = await search_learning_resources(settings, query, max_results=3)
+    return {
+        "query": query,
+        "resources_found": len(resources),
+        "resources": resources,
+    }
+
+
 @router.get("/history", response_model=list[JobFitHistoryItem])
 async def job_fit_history(
     _: Annotated[None, Depends(require_service_api_key)],
