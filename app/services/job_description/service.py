@@ -308,11 +308,16 @@ async def analyze_job_fit_llm(
         job_text=extracted_jd,
     )
     analysis_prompt += "\n\n" + (
-        "IMPORTANT: When you write your recommendations in the 'recommendations' field, "
-        "weave in specific learning resources with direct links. "
-        "For each skill gap or area for improvement, add a sentence like: "
-        "'To improve in [skill], try [Resource Title] at [URL]'. "
-        "Make recommendations ACTIONABLE and resource-rich.\n"
+        "CRITICAL INSTRUCTION FOR RECOMMENDATIONS:\n"
+        "- EVERY recommendation must include at least ONE specific learning resource link.\n"
+        "- Format EVERY resource EXACTLY as: '[Resource Name] [Platform]: [URL]' NO PARENTHESES.\n"
+        "- Examples of CORRECT formatting:\n"
+        "  ✓ 'Learn React with React: The Basics Pluralsight: https://www.pluralsight.com/courses/react-fundamentals'\n"
+        "  ✗ 'React: The Basics' course on Pluralsight (https://...) [WRONG - avoid parentheses]'\n"
+        "- Do NOT add () or () at all in recommendations.\n"
+        "- Weave links naturally: 'To master React, complete React: The Basics Pluralsight: https://...'\n"
+        "- Minimum 5 recommendations, EACH with embedded resource links.\n"
+        "- Every skill gap must have a direct learning resource link.\n"
         f"{learning_resources_text}"
     )
     raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)
