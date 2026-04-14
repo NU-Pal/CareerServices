@@ -83,7 +83,7 @@ async def analyze_job_fit(
     resume_blob = resume_to_text_blob(api_resume)
 
     try:
-        analysis = analyze_job_fit_llm(settings, resume_blob, job_text)
+        analysis = await analyze_job_fit_llm(settings, resume_blob, job_text)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
 

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     cors_origins: str = "*"
     groq_model: str = "llama-3.3-70b-versatile"
 
+    youtube_api_key: str = ""
+    google_search_api_key: str = ""
+    google_search_engine_id: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

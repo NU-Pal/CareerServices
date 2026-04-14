@@ -182,7 +182,101 @@ def _call_groq(settings: Settings, model: str, prompt: str, json_mode: bool, max
     return content
 
 
-def analyze_job_fit_llm(
+async def _search_youtube_resources(settings: Settings, query: str, max_results: int = 5) -> list[dict[str, str]]:
+    api_key = settings.youtube_api_key
+    if not api_key:
+        return []
+
+    params = {
+        "part": "snippet",
+        "q": f"{query} tutorial course",
+        "type": "video",
+        "videoDuration": "medium",
+        "order": "relevance",
+        "maxResults": str(min(max_results, 10)),
+        "key": api_key,
+    }
+
+    url = "https://www.googleapis.com/youtube/v3/search"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+    results: list[dict[str, str]] = []
+    for item in data.get("items", [])[:max_results]:
+        video_id = item.get("id", {}).get("videoId")
+        snippet = item.get("snippet", {})
+        if not video_id:
+            continue
+        results.append({
+            "title": snippet.get("title", "Untitled Video"),
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+            "source": "YouTube",
+            "description": snippet.get("description", ""),
+        })
+    return results
+
+
+async def _search_google_tutorial_resources(settings: Settings, query: str, max_results: int = 5) -> list[dict[str, str]]:
+    api_key = settings.google_search_api_key
+    cx = settings.google_search_engine_id
+    if not api_key or not cx:
+        return []
+
+    tutorial_sites = [
+        "coursera.org",
+        "edx.org",
+        "udemy.com",
+        "khanacademy.org",
+        "freecodecamp.org",
+        "pluralsight.com",
+    ]
+
+    results: list[dict[str, str]] = []
+    num_per_site = max(1, max_results // len(tutorial_sites))
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for site in tutorial_sites:
+            if len(results) >= max_results:
+                break
+            params = {
+                "key": api_key,
+                "cx": cx,
+                "q": f"{query} tutorial course site:{site}",
+                "num": str(min(num_per_site, 5)),
+            }
+            response = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
+            if response.status_code != 200:
+                continue
+            data = response.json()
+            for item in data.get("items", [])[:max_results - len(results)]:
+                results.append({
+                    "title": item.get("title", "Learning resource"),
+                    "url": item.get("link", ""),
+                    "source": site,
+                    "description": item.get("snippet", ""),
+                })
+    return results[:max_results]
+
+
+async def search_learning_resources(settings: Settings, query: str, max_results: int = 6) -> list[dict[str, str]]:
+    resources: list[dict[str, str]] = []
+    resources.extend(await _search_youtube_resources(settings, query, max_results))
+    if len(resources) < max_results:
+        resources.extend(await _search_google_tutorial_resources(settings, query, max_results - len(resources)))
+    seen = set()
+    unique = []
+    for item in resources:
+        url = item.get("url")
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        unique.append(item)
+    return unique[:max_results]
+
+
+async def analyze_job_fit_llm(
     settings: Settings,
     resume_summary: str,
     job_text: str,
@@ -191,10 +285,25 @@ def analyze_job_fit_llm(
     jd_extraction_prompt = _JD_EXTRACTION_PROMPT.format(job_text=job_text[:8_000])
     extracted_jd = _call_groq(settings, "llama-3.1-8b-instant", jd_extraction_prompt, False, 1500)
 
+    learning_query = job_text.replace("\n", " ").strip()[:400] or "job preparation" 
+    learning_resources = await search_learning_resources(settings, learning_query, max_results=6)
+    learning_resources_text = "No external learning resources were found."
+    if learning_resources:
+        learning_resources_text = "Here are some verified learning resources to support this role:\n"
+        learning_resources_text += "\n".join(
+            [f"{idx + 1}. {item['title']} ({item['source']}) - {item['url']}" for idx, item in enumerate(learning_resources)]
+        )
+
     # Step 2: Deep analysis with powerful 70B model
     analysis_prompt = _JOB_FIT_PROMPT.format(
         resume_summary=resume_summary[:12_000],
         job_text=extracted_jd,
+    )
+    analysis_prompt += "\n\n" + (
+        "Use these actual learning resources to make your suggestedLearning recommendations. "
+        "If they are relevant, include 3-5 of these exact titles and URLs in suggestedLearning. "
+        "Do not invent other URLs. If a resource is not useful, omit it.\n"
+        f"{learning_resources_text}"
     )
     raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)
 
