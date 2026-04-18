@@ -93,6 +93,26 @@ def _strip_json_fence(raw: str) -> str:
     return s.strip()
 
 
+def _clean_link(link: str | None) -> str | None:
+    if not link:
+        return None
+    # If LLM returns markdown [Text](URL), extract URL
+    match = re.search(r"\]\((https?://[^\s\)]+)\)", link)
+    if match:
+        return match.group(1)
+    
+    # Simple regex to find the first string that looks like a URL or domain
+    # and strip common junk
+    link = link.strip().strip("()[]\"'")
+    if " " in link:
+        # If there's a space, try to find the part that looks like a domain
+        parts = link.split()
+        for p in parts:
+            if "." in p and not p.endswith(".") and not p.startswith("."):
+                return p.strip(".,")
+    return link
+
+
 def parse_resume_with_llm(settings: Settings, raw_text: str) -> ParsedResume:
     prompt = _PROMPT_TEMPLATE.format(resume_text=raw_text)
 
@@ -120,5 +140,10 @@ def parse_resume_with_llm(settings: Settings, raw_text: str) -> ParsedResume:
     # Strip common LLM artifacts from name
     if data.get("fullName"):
         data["fullName"] = data["fullName"].replace("|", "").strip(" ,")
+
+    # Clean project links
+    if data.get("projects"):
+        for p in data["projects"]:
+            p["link"] = _clean_link(p.get("link"))
 
     return ParsedResume.model_validate(data)
