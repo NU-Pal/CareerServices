@@ -22,7 +22,7 @@ def _exp_in(x: dict[str, Any]) -> dict[str, Any]:
         "startDate": _g(x, "StartDate", "startDate"),
         "endDate": _g(x, "EndDate", "endDate"),
         "isCurrent": _g(x, "IsCurrent", "isCurrent"),
-        "bullets": list(_g(x, "Bullets", "bullets") or []),
+        "bullets": list(_g(x, "Bullets", "bullets") or x.get("points") or x.get("highlights") or []),
     }
 
 
@@ -41,10 +41,10 @@ def _edu_in(x: dict[str, Any]) -> dict[str, Any]:
 def _proj_in(x: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": _g(x, "Name", "name"),
-        "description": _g(x, "Description", "description"),
-        "bullets": list(_g(x, "Bullets", "bullets") or []),
-        "technologies": list(_g(x, "Technologies", "technologies") or []),
-        "link": _g(x, "Link", "link"),
+        "description": _g(x, "Description", "description") or x.get("summary") or x.get("about"),
+        "bullets": list(_g(x, "Bullets", "bullets") or x.get("points") or x.get("highlights") or []),
+        "technologies": list(_g(x, "Technologies", "technologies") or x.get("stack") or []),
+        "link": _g(x, "Link", "link") or x.get("url"),
     }
 
 
