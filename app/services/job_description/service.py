@@ -136,7 +136,7 @@ FIELD RULES:
 - missingSkills: List EVERY keyword/technology/tool in the JD that does NOT appear in the CV. Include ALL.
 - skillsNote: Format EXACTLY as 'AI Reviewed [Total] priority keywords and confirmed [Matched] as covered.'
 - interviewFocus: Each item tied to real content in the JD or CV.
-- suggestedLearning: Each item must name a SPECIFIC resource (course + platform + time estimate).
+- suggestedLearning: Each item must name a SPECIFIC resource (course + platform).
 - redFlags (PRIORITY — experience & career stage): This section must foreground hiring realism, not only missing tools. ALWAYS consider and call out when relevant:
   - Seniority / years of experience: JD asks for mid-level, senior, lead, or "X+ years" but the CV reads as student, intern, new grad, or early-career only.
   - Student vs professional track: still studying or mostly academic projects while the JD expects several years of industry experience or ownership of production systems.
@@ -181,7 +181,7 @@ RETURN ONLY VALID JSON — no markdown, no text outside JSON:
   "recommendations": ["3-5 focused paragraphs addressing gaps or career growth."],
   "actionPlan": [{{"targetGap": "...", "expectedImpact": "...", "priority": "Critical | High | Medium | Low", "status": "Do now | Do soon | Do later"}}],
   "interviewFocus": ["Specific preparation tip tied to real JD/CV content."],
-  "suggestedLearning": ["Specific resource name on platform — addresses gap. Estimated time: X hours."]
+  "suggestedLearning": ["Specific resource name on platform — addresses gap."]
 }}
 """
 
@@ -387,11 +387,14 @@ async def analyze_job_fit_llm(
     analysis_prompt += "\n\n" + (
         "CRITICAL INSTRUCTION FOR RECOMMENDATIONS & LINKS:\n"
         "- MANDATORY: You MUST provide exactly 5 recommendations in total.\n"
+        "- QUALITY RULE: Each recommendation must be a helpful, insightful paragraph (2-3 sentences) from a senior mentor's perspective. Do NOT just say 'watch this video'. Explain WHY it helps and what they will learn.\n"
+        "- LINK INTEGRATION: Naturally mention the resource at the end of the advice paragraph.\n"
         "- MANDATORY: You MUST provide a specific resource link for EACH recommendation.\n"
         "- DIVERSITY RULE: You MUST use at least 2-3 links from the 'ACADEMIC COURSES' section and the rest from 'VIDEO TUTORIALS'.\n"
+        "- NO ESTIMATED TIME: Do NOT include 'Estimated time' or 'Duration' in your response. The user finds them inaccurate.\n"
         "- Do NOT repeat the same link more than twice.\n"
         "- Do NOT, under any circumstances, invent, guess, or hallucinate a URL.\n"
-        "- Format EVERY resource EXACTLY as: '[Platform] [Resource Name]: [URL]'.\n"
+        "- Format EVERY resource link EXACTLY as: '[Platform] [Resource Name]: [URL]'.\n"
         f"{learning_resources_text}"
     )
     raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)
