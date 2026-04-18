@@ -26,6 +26,7 @@ class ParsedResumeEducation(BaseModel):
 class ParsedResumeProject(BaseModel):
     name: str | None = None
     description: str | None = None
+    bullets: list[str] = Field(default_factory=list)
     technologies: list[str] = Field(default_factory=list)
     link: str | None = None
 

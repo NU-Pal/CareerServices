@@ -88,6 +88,24 @@ Job Description:
 """
 
 # --------------------------------------------------------------------------- #
+# Step 1.5 prompt: Extract specific missing skill gaps (runs on 8B model)     #
+# --------------------------------------------------------------------------- #
+_GAP_EXTRACTION_PROMPT = """You are a technical career gap analyst.
+Your job is to compare a candidate's CV highlights with the provided Job Description requirements and identify the TOP 5 CRITICAL technical skills or knowledge gaps.
+
+Candidate CV Highlights:
+{resume_summary}
+
+Extracted Job Requirements:
+{job_requirements}
+
+Identify the top 5 most important skills/technologies/concepts that the candidate is missing or needs to improve based on the JD.
+Return ONLY a comma-separated list of these 5 gaps. If fewer than 5 exist, return only those.
+Example: "React Native, Mobile Security, Redux, App Store Deployment, TypeScript"
+Output:
+"""
+
+# --------------------------------------------------------------------------- #
 # Step 2 prompt: deep analysis (runs on 70B model)                             #
 # --------------------------------------------------------------------------- #
 _JOB_FIT_PROMPT = """You are an expert career analyst and talent evaluator with experience across ALL industries,
@@ -231,6 +249,10 @@ async def _search_google_tutorial_resources(settings: Settings, query: str, max_
         "khanacademy.org",
         "freecodecamp.org",
         "pluralsight.com",
+        "linkedin.com/learning",
+        "medium.com",
+        "dev.to",
+        "github.com",
     ]
 
     results: list[dict[str, str]] = []
@@ -244,19 +266,41 @@ async def _search_google_tutorial_resources(settings: Settings, query: str, max_
                 "key": api_key,
                 "cx": cx,
                 "q": f"{query} tutorial course site:{site}",
-                "num": str(min(num_per_site, 5)),
+                "num": "3", # Fewer per site to get more breadth
             }
             response = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
             if response.status_code != 200:
                 continue
             data = response.json()
-            for item in data.get("items", [])[:max_results - len(results)]:
+            for item in data.get("items", []):
+                if len(results) >= max_results:
+                    break
                 results.append({
                     "title": item.get("title", "Learning resource"),
                     "url": item.get("link", ""),
                     "source": site,
                     "description": item.get("snippet", ""),
                 })
+        
+        # General search fallback if we still need more
+        if len(results) < max_results:
+            params = {
+                "key": api_key,
+                "cx": cx,
+                "q": f"{query} educational tutorial guide",
+                "num": str(max_results - len(results)),
+            }
+            response = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
+            if response.status_code == 200:
+                data = response.json()
+                for item in data.get("items", []):
+                    results.append({
+                        "title": item.get("title", "Online Resource"),
+                        "url": item.get("link", ""),
+                        "source": "Web",
+                        "description": item.get("snippet", ""),
+                    })
+                    
     return results[:max_results]
 
 
@@ -285,22 +329,48 @@ async def analyze_job_fit_llm(
     jd_extraction_prompt = _JD_EXTRACTION_PROMPT.format(job_text=job_text[:8_000])
     extracted_jd = _call_groq(settings, "llama-3.1-8b-instant", jd_extraction_prompt, False, 1500)
 
-    learning_query = extracted_jd.replace("\n", " ").strip()[:400] or "job preparation" 
-    learning_resources = await search_learning_resources(settings, learning_query, max_results=10)
+    # Step 1.5: Extract top gaps for targeted search
+    gap_prompt = _GAP_EXTRACTION_PROMPT.format(
+        resume_summary=resume_summary[:4000],
+        job_requirements=extracted_jd[:4000]
+    )
+    top_gaps_raw = _call_groq(settings, "llama-3.1-8b-instant", gap_prompt, False, 200)
+    top_gaps = [g.strip() for g in top_gaps_raw.split(",") if g.strip()]
     
-    # Build a mapping of skill -> resources ONLY if we actually found resources
+    # Perform searches for the most critical gaps
+    # We combine them into a few targeted queries to avoid too many API calls
+    search_queries = []
+    if top_gaps:
+        # Query 1: Top 2 gaps together
+        search_queries.append(" ".join(top_gaps[:2]))
+        # Query 2: Next 2 gaps
+        if len(top_gaps) > 2:
+            search_queries.append(" ".join(top_gaps[2:4]))
+    else:
+        search_queries.append(extracted_jd[:400].replace("\n", " ").strip())
+
+    learning_resources = []
+    for query in search_queries[:2]: # Limit to 2 targeted searches
+        results = await search_learning_resources(settings, query, max_results=5)
+        learning_resources.extend(results)
+    
+    # Build a mapping of skill -> resources
     skill_resources_map = {}
     if learning_resources:
         for res in learning_resources:
-            skill_resources_map[res['title']] = res['url']
+            # Avoid duplicate titles
+            if res['title'] not in skill_resources_map:
+                skill_resources_map[res['title']] = res['url']
     
     # Format resources as a prompt instruction
     learning_resources_text = ""
     if skill_resources_map:
-        learning_resources_text = "Here are learning resources to weave into recommendations:\n"
+        learning_resources_text = "Here are REAL verified learning resources you MUST use for recommendations:\n"
         learning_resources_text += "\n".join(
             [f"- {title}: {url}" for title, url in skill_resources_map.items()]
         )
+    else:
+        learning_resources_text = "No specific learning resource links found. Provide general advice without invented URLs."
 
     # Step 2: Deep analysis with powerful 70B model
     analysis_prompt = _JOB_FIT_PROMPT.format(
@@ -308,19 +378,15 @@ async def analyze_job_fit_llm(
         job_text=extracted_jd,
     )
     analysis_prompt += "\n\n" + (
-        "CRITICAL INSTRUCTION FOR RECOMMENDATIONS:\n"
-        "- EVERY recommendation must include at least ONE specific learning resource link.\n"
-        "- Format EVERY resource EXACTLY as: '[Resource Name] [Platform]: [URL]' NO PARENTHESES.\n"
-        "- Examples of CORRECT formatting:\n"
-        "  ✓ 'Learn React with React: The Basics Pluralsight: https://www.pluralsight.com/courses/react-fundamentals'\n"
-        "  ✗ 'React: The Basics' course on Pluralsight (https://...) [WRONG - avoid parentheses]'\n"
-        "- Do NOT add () or [] around URLs in recommendations.\n"
-        "- Do NOT invent links or use placeholders. Use only real URLs that are accessible.\n"
-        "- Prefer actual URLs from the supplied learning resources list when available.\n"
-        "- If a resource is unavailable, write a strong recommendation sentence without a broken URL rather than a fake one.\n"
-        "- Weave links naturally: 'To master React, complete React: The Basics Pluralsight: https://...'\n"
-        "- Minimum 5 recommendations, EACH with an embedded resource link if possible.\n"
-        "- Every skill gap must have a direct learning resource link.\n"
+        "CRITICAL INSTRUCTION FOR RECOMMENDATIONS & LINKS:\n"
+        "- Do NOT, under any circumstances, invent, guess, or hallucinate a URL.\n"
+        "- You are ONLY permitted to use the URLs provided in the list below.\n"
+        "- If the provided list is empty or doesn't have a relevant link for a gap, give a strong text-only recommendation without any URL.\n"
+        "- Format EVERY resource EXACTLY as: '[Platform] [Resource Name]: [URL]'.\n"
+        "- Example of CORRECT usage: 'To master this, complete Udemy Python for Data Science: https://www.udemy.com/...' (using a provided URL).\n"
+        "- Example of correct fallback: 'I recommend you study Microservices architecture; look for a reputable course on edX or Coursera.' (omitting URL since none was provided).\n"
+        "- Minimum 4 focusing recommendations. Total 5 is ideal but ONLY if valid links or high quality text advice is available.\n"
+        "- Every link provided in your response MUST be a verbatim copy from the list below.\n"
         f"{learning_resources_text}"
     )
     raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)

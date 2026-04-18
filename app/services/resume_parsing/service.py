@@ -14,8 +14,8 @@ _PROMPT_TEMPLATE = """You are a professional resume parser. Your goal is to extr
 CRITICAL:
 - Extracts must be VERBATIM. Do NOT summarize. Do NOT change phrasing. Do NOT shorten.
 - If ANY section (like Experience, Education, Projects) is MISSING from the resume, you MUST return an empty array [] or null for it. DO NOT hallucinate or pull text from other sections.
-- For the 'projects[].description', copy the entire text as it appears.
-- For 'experience[].bullets', copy each bullet point exactly as written.
+- For both 'experience[].bullets' and 'projects[].bullets', copy each bullet point verbatim exactly as written.
+- If a project does not have bullets, use a single concise summary in 'description'.
 - Return ONLY a valid JSON object — no markdown, no explanation, just raw JSON.
 
 Return this exact JSON structure (use null for missing fields, empty arrays [] for missing lists):
@@ -56,9 +56,10 @@ Return this exact JSON structure (use null for missing fields, empty arrays [] f
   "projects": [
     {{
       "name": "string or null",
-      "description": "CRITICAL: COPY-PASTE character-for-character the entire project description. Do NOT rephrase. Do NOT clean up. Do NOT shorten. Include every detail found.",
+      "description": "A single-string summary of the project. If already using bullets, this can be null or a brief overview.",
+      "bullets": ["bullet1", "bullet2 (CRITICAL: COPY-PASTE character-for-character every detail. Do NOT rephrase.)"],
       "technologies": ["tech1", "tech2"],
-      "link": "string or null"
+      "link": "string or null (CRITICAL: Extract ONLY the actual URL. If the text says 'GitHub' find the URL associated with it. Do NOT return just 'GitHub' or 'View'.)"
     }}
   ],
   "certifications": ["cert1"],
