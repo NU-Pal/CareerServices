@@ -55,13 +55,14 @@ Return this exact JSON structure (use null for missing fields, empty arrays [] f
   ],
   "projects": [
     {{
-      "name": "string or null",
-      "description": "A single-string summary of the project. If already using bullets, this can be null or a brief overview.",
-      "bullets": ["bullet1", "bullet2 (CRITICAL: COPY-PASTE character-for-character every detail. Do NOT rephrase.)"],
-      "technologies": ["tech1", "tech2"],
-      "link": "string or null (CRITICAL: Extract ONLY the actual URL. If the document has a 'HYPERLINKS FOUND IN DOCUMENT' section at the end, use it to find the URL associated with this project. If the text says 'Link' or 'GitHub', find the corresponding URL from that list.)"
+      "name": "Project Name (Verbatim)",
+      "description": "A 1-2 sentence overview of the project's purpose.",
+      "bullets": ["Verbatim detail 1", "Verbatim detail 2"],
+      "technologies": ["List of tools used"],
+      "link": "URL from text or hyperlinks section"
     }}
   ],
+(CRITICAL FOR PROJECTS: You MUST populate both 'description' and 'bullets' for every project found. Do NOT return null for these fields if there is any descriptive text available. For 'link', check the 'HYPERLINKS FOUND IN DOCUMENT' section below.)
   "certifications": ["cert1"],
   "languages": ["Arabic", "English"],
   "awards": ["award1"]
