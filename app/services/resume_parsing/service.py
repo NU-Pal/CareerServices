@@ -59,13 +59,15 @@ Return this exact JSON structure (use null for missing fields, empty arrays [] f
       "description": "A single-string summary of the project. If already using bullets, this can be null or a brief overview.",
       "bullets": ["bullet1", "bullet2 (CRITICAL: COPY-PASTE character-for-character every detail. Do NOT rephrase.)"],
       "technologies": ["tech1", "tech2"],
-      "link": "string or null (CRITICAL: Extract ONLY the actual URL. If the text says 'GitHub' find the URL associated with it. Do NOT return just 'GitHub' or 'View'.)"
+      "link": "string or null (CRITICAL: Extract ONLY the actual URL. If the document has a 'HYPERLINKS FOUND IN DOCUMENT' section at the end, use it to find the URL associated with this project. If the text says 'Link' or 'GitHub', find the corresponding URL from that list.)"
     }}
   ],
   "certifications": ["cert1"],
   "languages": ["Arabic", "English"],
   "awards": ["award1"]
 }}
+
+(IMPORTANT: If you see a 'HYPERLINKS FOUND IN DOCUMENT' section at the bottom of the text, it contains URLs that were embedded as hyperlinks in the document. Use these to fill in links for projects, LinkedIn, GitHub, and websites.)
 
 RESUME TEXT:
 {resume_text}
@@ -75,13 +77,30 @@ RESUME TEXT:
 def extract_pdf_text(file_bytes: bytes) -> str:
     reader = PdfReader(BytesIO(file_bytes))
     parts: list[str] = []
+    uris: list[str] = []
     for page in reader.pages:
         t = page.extract_text()
         if t:
             parts.append(t)
+        
+        # Extract links from annotations (for hyperlinked text that doesn't print the URL)
+        if "/Annots" in page:
+            for annot in page["/Annots"]:
+                obj = annot.get_object()
+                if "/A" in obj and "/URI" in obj["/A"]:
+                    uri = obj["/A"]["/URI"]
+                    if uri not in uris:
+                        uris.append(uri)
+
     text = "\n".join(parts).strip()
     if not text:
         raise ValueError("Could not extract text from PDF (empty or scanned image)")
+    
+    if uris:
+        text += "\n\n--- HYPERLINKS FOUND IN DOCUMENT ---\n"
+        for i, uri in enumerate(uris, 1):
+            text += f"[{i}] {uri}\n"
+
     # 30 000 chars — enough for even very long CVs without cutting late sections
     return text[:30_000]
 
