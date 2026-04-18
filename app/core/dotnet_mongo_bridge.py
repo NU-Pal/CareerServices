@@ -42,6 +42,7 @@ def _proj_in(x: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": _g(x, "Name", "name"),
         "description": _g(x, "Description", "description"),
+        "bullets": list(_g(x, "Bullets", "bullets") or []),
         "technologies": list(_g(x, "Technologies", "technologies") or []),
         "link": _g(x, "Link", "link"),
     }
@@ -107,6 +108,7 @@ def _proj_out(x: dict[str, Any]) -> dict[str, Any]:
     return {
         "Name": x.get("name"),
         "Description": x.get("description"),
+        "Bullets": x.get("bullets") or [],
         "Technologies": x.get("technologies") or [],
         "Link": x.get("link"),
     }
