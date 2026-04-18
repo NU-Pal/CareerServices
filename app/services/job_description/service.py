@@ -123,13 +123,13 @@ TONE & PERSPECTIVE (CRITICAL):
 - Use "you", "your CV", "your experience" instead of "the candidate", "the applicant", or "they".
 - Every single field must be phrased as direct feedback to the user.
 
-SCORING — use ONLY this strict weighted formula:
+SCORING — use ONLY this strict weighted formula (Use integers from 0 to 100 for each field):
   - Skills match:         30%  → count matched vs total JD keywords
   - Experience match:     30%  → compare years/level required vs candidate actual
   - Domain/Industry fit:  20%  → how closely does background match this industry?
   - Credentials:          10%  → education level required vs candidate's current status
   - Day-1 Readiness:      10%  → can they contribute from day one?
-overallScore = round((skills×0.3) + (experience×0.3) + (domain×0.2) + (credentials×0.1) + (readiness×0.1))
+overallScore = round((skills×0.3) + (experience×0.3) + (domain×0.2) + (credentials×0.1) + (readiness×0.1)) (Use 0-100 for skills, experience, etc.)
 
 FIELD RULES:
 - matchedSkills: List EVERY keyword/technology/tool that appears in BOTH the JD and the CV. Do NOT group. Include ALL.

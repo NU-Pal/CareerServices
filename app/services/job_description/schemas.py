@@ -1,6 +1,5 @@
 from typing import Any
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class JobFitBreakdownMatchedSkill(BaseModel):
@@ -21,6 +20,16 @@ class JobFitBreakdown(BaseModel):
     domain: int = 0
     credentials: int = 0
     readiness: int = 0
+
+    @field_validator("skills", "experience", "domain", "credentials", "readiness", mode="before")
+    @classmethod
+    def convert_float_to_int(cls, v: Any) -> int:
+        if isinstance(v, (float, int)):
+            # If it's a decimal like 0.6, convert to 60
+            if 0 < v <= 1.0 and isinstance(v, float):
+                return int(v * 100)
+            return int(v)
+        return 0
     skillsNote: str | None = None
     experienceNote: str | None = None
     domainNote: str | None = None
