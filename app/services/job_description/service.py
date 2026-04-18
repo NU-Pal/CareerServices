@@ -243,16 +243,14 @@ async def _search_google_tutorial_resources(settings: Settings, query: str, max_
     if not api_key or not cx:
         return []
 
-    tutorial_sites = ["coursera.org", "udemy.com", "edx.org", "pluralsight.com", "linkedin.com/learning", "freecodecamp.org"]
+    tutorial_sites = ["coursera.org", "udemy.com", "edx.org", "pluralsight.com"]
     
-    async def fetch_site(client: httpx.AsyncClient, site: str, q: str) -> list[dict[str, str]]:
+    async def fetch_results(client: httpx.AsyncClient, q: str) -> list[dict[str, str]]:
         try:
-            params = {
-                "key": api_key,
-                "cx": cx,
-                "q": f"{q} site:{site}",
-                "num": "3",
-            }
+            # Use broad platform keywords instead of strict site: operators which can be too restrictive
+            # for long queries.
+            search_q = f"{q} course Coursera Udemy edX"
+            params = {"key": api_key, "cx": cx, "q": search_q, "num": "10"}
             resp = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
             if resp.status_code != 200:
                 return []
@@ -260,7 +258,7 @@ async def _search_google_tutorial_resources(settings: Settings, query: str, max_
             return [{
                 "title": item.get("title", "Learning resource"),
                 "url": item.get("link", ""),
-                "source": site,
+                "source": "Web",
                 "description": item.get("snippet", ""),
             } for item in data.get("items", [])]
         except Exception:
@@ -268,37 +266,38 @@ async def _search_google_tutorial_resources(settings: Settings, query: str, max_
 
     results: list[dict[str, str]] = []
     async with httpx.AsyncClient(timeout=10.0) as client:
-        # 1. Try a broad search first to get a variety of platforms in one go
-        broad_q = f"{query} course tutorial"
-        params = {"key": api_key, "cx": cx, "q": broad_q, "num": "10"}
-        resp = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
-        if resp.status_code == 200:
-            data = resp.json()
-            for item in data.get("items", []):
-                results.append({
-                    "title": item.get("title", "Web Resource"),
-                    "url": item.get("link", ""),
-                    "source": "Web",
-                    "description": item.get("snippet", ""),
-                })
-
-        # 2. Parallel targeted search for top platforms
-        tasks = [fetch_site(client, s, query) for s in tutorial_sites]
-        site_results = await asyncio.gather(*tasks)
-        for res_list in site_results:
-            results.extend(res_list)
+        # 1. Primary search with platform keywords
+        results.extend(await fetch_results(client, query))
+        
+        # 2. Targeted platform check (just for Coursera/Udemy to be sure)
+        if len(results) < 5:
+            params = {"key": api_key, "cx": cx, "q": f"{query} site:coursera.org OR site:udemy.com", "num": "5"}
+            resp = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in data.get("items", []):
+                    results.append({
+                        "title": item.get("title", "Online course"),
+                        "url": item.get("link", ""),
+                        "source": "Platform",
+                        "description": item.get("snippet", ""),
+                    })
                     
     return results[:max_results]
 
 
 async def search_learning_resources(settings: Settings, query: str, max_results: int = 12) -> list[dict[str, str]]:
-    # Increase max_results to ensure a rich pool. Google (Coursera/Udemy) is prioritized.
+    # Get results from both YouTube and Google
     google_task = _search_google_tutorial_resources(settings, query, max_results=10)
     yt_task = _search_youtube_resources(settings, query, max_results=6)
     
     google_results, yt_results = await asyncio.gather(google_task, yt_task)
     
-    # Prioritize Google/Platform results by putting them first
+    # ENSURE DIVERSITY: We explicitly label them to help the LLM later
+    for r in google_results: r['type'] = 'COURSE'
+    for r in yt_results: r['type'] = 'YOUTUBE'
+    
+    # Put Google results first to ensure they aren't lost in slicing
     resources = google_results + yt_results
     
     seen = set()
@@ -348,22 +347,36 @@ async def analyze_job_fit_llm(
     for results in search_results:
         learning_resources.extend(results)
     
-    # Build a mapping of skill -> resources
-    skill_resources_map = {}
-    if learning_resources:
-        for res in learning_resources:
-            # Avoid duplicate titles
-            if res['title'] not in skill_resources_map:
-                skill_resources_map[res['title']] = res['url']
+    # Build a mapping of skill -> resources, categorized for the LLM
+    courses_pool = []
+    youtube_pool = []
     
-    # Format resources as a prompt instruction
-    learning_resources_text = ""
-    if skill_resources_map:
-        learning_resources_text = "Here are REAL verified learning resources (Coursera, Udemy, YouTube, etc.) you MUST use for recommendations:\n"
-        learning_resources_text += "\n".join(
-            [f"- {title}: {url}" for title, url in skill_resources_map.items()]
-        )
-    else:
+    if learning_resources:
+        seen_urls = set()
+        for res in learning_resources:
+            url = res.get('url')
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            
+            entry = f"- {res['title']}: {url}"
+            # Check for YouTube in URL or title
+            if "youtube.com" in url.lower() or "youtu.be" in url.lower():
+                youtube_pool.append(entry)
+            else:
+                courses_pool.append(entry)
+    
+    # Format resources as a prompt instruction with clear categories
+    learning_resources_text = "VERIFIED LEARNING RESOURCES YOU MUST USE:\n\n"
+    if courses_pool:
+        learning_resources_text += "### ACADEMIC COURSES (Coursera, Udemy, etc.) - PRIORITY:\n"
+        learning_resources_text += "\n".join(courses_pool) + "\n\n"
+    
+    if youtube_pool:
+        learning_resources_text += "### VIDEO TUTORIALS (YouTube):\n"
+        learning_resources_text += "\n".join(youtube_pool) + "\n\n"
+    
+    if not courses_pool and not youtube_pool:
         learning_resources_text = "No specific learning resource links found. Provide general advice without invented URLs."
 
     # Step 2: Deep analysis with powerful 70B model
@@ -373,12 +386,12 @@ async def analyze_job_fit_llm(
     )
     analysis_prompt += "\n\n" + (
         "CRITICAL INSTRUCTION FOR RECOMMENDATIONS & LINKS:\n"
-        "- MANDATORY: You MUST provide a specific resource link for EVERY ONE of the 5 recommendations.\n"
-        "- AIM FOR DIVERSITY: Use a mix of platforms (e.g., 2 Coursera/Udemy, 2 YouTube, 1 other) if available in the list.\n"
+        "- MANDATORY: You MUST provide exactly 5 recommendations in total.\n"
+        "- MANDATORY: You MUST provide a specific resource link for EACH recommendation.\n"
+        "- DIVERSITY RULE: You MUST use at least 2-3 links from the 'ACADEMIC COURSES' section and the rest from 'VIDEO TUTORIALS'.\n"
+        "- Do NOT repeat the same link more than twice.\n"
         "- Do NOT, under any circumstances, invent, guess, or hallucinate a URL.\n"
-        "- Use the provided resources list below. Pair each recommendation with the most relevant link.\n"
         "- Format EVERY resource EXACTLY as: '[Platform] [Resource Name]: [URL]'.\n"
-        "- You must return exactly 5 recommendations, each in its own numbered box, and each containing an 'Open Resource' link.\n"
         f"{learning_resources_text}"
     )
     raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)
