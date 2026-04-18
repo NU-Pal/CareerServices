@@ -1,5 +1,6 @@
 import json
 import re
+import asyncio
 from typing import Any
 
 import httpx
@@ -255,41 +256,39 @@ async def _search_google_tutorial_resources(settings: Settings, query: str, max_
         "github.com",
     ]
 
-    results: list[dict[str, str]] = []
-    num_per_site = max(1, max_results // len(tutorial_sites))
+    # Combine sites into one search query with OR for speed and diversity
+    site_query = " OR ".join([f"site:{s}" for s in tutorial_sites])
+    full_query = f"{query} tutorial course ({site_query})"
 
+    results: list[dict[str, str]] = []
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for site in tutorial_sites:
-            if len(results) >= max_results:
-                break
-            params = {
-                "key": api_key,
-                "cx": cx,
-                "q": f"{query} tutorial course site:{site}",
-                "num": "3", # Fewer per site to get more breadth
-            }
-            response = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
-            if response.status_code != 200:
-                continue
+        params = {
+            "key": api_key,
+            "cx": cx,
+            "q": full_query,
+            "num": str(max_results + 5), # Get extra to allow for better selection
+        }
+        response = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
+        if response.status_code == 200:
             data = response.json()
             for item in data.get("items", []):
-                if len(results) >= max_results:
-                    break
+                link = item.get("link", "")
+                source = "Web"
+                for s in tutorial_sites:
+                    if s in link:
+                        source = s
+                        break
                 results.append({
                     "title": item.get("title", "Learning resource"),
-                    "url": item.get("link", ""),
-                    "source": site,
+                    "url": link,
+                    "source": source,
                     "description": item.get("snippet", ""),
                 })
         
-        # General search fallback if we still need more
-        if len(results) < max_results:
-            params = {
-                "key": api_key,
-                "cx": cx,
-                "q": f"{query} educational tutorial guide",
-                "num": str(max_results - len(results)),
-            }
+        # General search fallback if we still need more after the specific sites
+        if len(results) < 2:
+            params["q"] = f"{query} educational tutorial guide"
+            params["num"] = "5"
             response = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
             if response.status_code == 200:
                 data = response.json()
@@ -305,10 +304,14 @@ async def _search_google_tutorial_resources(settings: Settings, query: str, max_
 
 
 async def search_learning_resources(settings: Settings, query: str, max_results: int = 6) -> list[dict[str, str]]:
-    resources: list[dict[str, str]] = []
-    resources.extend(await _search_youtube_resources(settings, query, max_results))
-    if len(resources) < max_results:
-        resources.extend(await _search_google_tutorial_resources(settings, query, max_results - len(resources)))
+    # Get results from both YouTube and Google in parallel to ensure diversity
+    yt_task = _search_youtube_resources(settings, query, max_results=3)
+    google_task = _search_google_tutorial_resources(settings, query, max_results=5)
+    
+    yt_results, google_results = await asyncio.gather(yt_task, google_task)
+    
+    resources = yt_results + google_results
+    
     seen = set()
     unique = []
     for item in resources:
@@ -338,20 +341,20 @@ async def analyze_job_fit_llm(
     top_gaps = [g.strip() for g in top_gaps_raw.split(",") if g.strip()]
     
     # Perform searches for the most critical gaps
-    # We combine them into a few targeted queries to avoid too many API calls
+    # We combine them into targeted queries to ensure broad coverage
     search_queries = []
     if top_gaps:
-        # Query 1: Top 2 gaps together
-        search_queries.append(" ".join(top_gaps[:2]))
-        # Query 2: Next 2 gaps
-        if len(top_gaps) > 2:
-            search_queries.append(" ".join(top_gaps[2:4]))
+        # Cover all 5 gaps by grouping them
+        for i in range(0, len(top_gaps), 2):
+            search_queries.append(" ".join(top_gaps[i:i+2]))
     else:
         search_queries.append(extracted_jd[:400].replace("\n", " ").strip())
 
     learning_resources = []
-    for query in search_queries[:2]: # Limit to 2 targeted searches
-        results = await search_learning_resources(settings, query, max_results=5)
+    # Fetch results for each query in parallel
+    fetch_tasks = [search_learning_resources(settings, q, max_results=6) for q in search_queries[:3]]
+    search_results = await asyncio.gather(*fetch_tasks)
+    for results in search_results:
         learning_resources.extend(results)
     
     # Build a mapping of skill -> resources
@@ -379,14 +382,13 @@ async def analyze_job_fit_llm(
     )
     analysis_prompt += "\n\n" + (
         "CRITICAL INSTRUCTION FOR RECOMMENDATIONS & LINKS:\n"
+        "- TRY YOUR BEST to provide a specific link for EVERY recommendation (total 5).\n"
         "- Do NOT, under any circumstances, invent, guess, or hallucinate a URL.\n"
-        "- You are ONLY permitted to use the URLs provided in the list below.\n"
-        "- If the provided list is empty or doesn't have a relevant link for a gap, give a strong text-only recommendation without any URL.\n"
+        "- Use the provided resources list below. If a exact match for a gap isn't found, pick the MOST CLOSELY RELATED resource.\n"
+        "- If NO relevant link is found in the list, provide high-quality text advice and omit the URL.\n"
         "- Format EVERY resource EXACTLY as: '[Platform] [Resource Name]: [URL]'.\n"
-        "- Example of CORRECT usage: 'To master this, complete Udemy Python for Data Science: https://www.udemy.com/...' (using a provided URL).\n"
-        "- Example of correct fallback: 'I recommend you study Microservices architecture; look for a reputable course on edX or Coursera.' (omitting URL since none was provided).\n"
-        "- Minimum 4 focusing recommendations. Total 5 is ideal but ONLY if valid links or high quality text advice is available.\n"
-        "- Every link provided in your response MUST be a verbatim copy from the list below.\n"
+        "- Minimum 4 focusing recommendations. Total 5 is ideal.\n"
+        "- Every link provided must be a verbatim copy from the list below.\n"
         f"{learning_resources_text}"
     )
     raw = _call_groq(settings, "llama-3.3-70b-versatile", analysis_prompt, True, 4096)
