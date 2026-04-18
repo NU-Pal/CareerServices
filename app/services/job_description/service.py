@@ -237,20 +237,20 @@ async def _search_youtube_resources(settings: Settings, query: str, max_results:
     return results
 
 
-async def _search_google_tutorial_resources(settings: Settings, query: str, max_results: int = 10) -> list[dict[str, str]]:
+async def _search_google_tutorial_resources(settings: Settings, query: str, max_results: int = 15) -> list[dict[str, str]]:
     api_key = settings.google_search_api_key
     cx = settings.google_search_engine_id
     if not api_key or not cx:
         return []
 
-    tutorial_sites = ["coursera.org", "udemy.com", "edx.org", "pluralsight.com", "linkedin.com/learning", "freecodecamp.org","Coursera.com","Leetcode.com"]
+    tutorial_sites = ["coursera.org", "udemy.com", "edx.org", "pluralsight.com", "linkedin.com/learning", "freecodecamp.org"]
     
-    async def fetch_site(client: httpx.AsyncClient, site: str) -> list[dict[str, str]]:
+    async def fetch_site(client: httpx.AsyncClient, site: str, q: str) -> list[dict[str, str]]:
         try:
             params = {
                 "key": api_key,
                 "cx": cx,
-                "q": f"{query} tutorial course site:{site}",
+                "q": f"{q} site:{site}",
                 "num": "3",
             }
             resp = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
@@ -268,54 +268,42 @@ async def _search_google_tutorial_resources(settings: Settings, query: str, max_
 
     results: list[dict[str, str]] = []
     async with httpx.AsyncClient(timeout=10.0) as client:
-        # Fetch from major platforms in parallel
-        tasks = [fetch_site(client, s) for s in tutorial_sites]
+        # 1. Try a broad search first to get a variety of platforms in one go
+        broad_q = f"{query} course tutorial"
+        params = {"key": api_key, "cx": cx, "q": broad_q, "num": "10"}
+        resp = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
+        if resp.status_code == 200:
+            data = resp.json()
+            for item in data.get("items", []):
+                results.append({
+                    "title": item.get("title", "Web Resource"),
+                    "url": item.get("link", ""),
+                    "source": "Web",
+                    "description": item.get("snippet", ""),
+                })
+
+        # 2. Parallel targeted search for top platforms
+        tasks = [fetch_site(client, s, query) for s in tutorial_sites]
         site_results = await asyncio.gather(*tasks)
         for res_list in site_results:
             results.extend(res_list)
-        
-        # General search fallback if we are still short
-        if len(results) < 5:
-            try:
-                params = {"key": api_key, "cx": cx, "q": f"{query} educational guide tutorial", "num": "5"}
-                resp = await client.get("https://www.googleapis.com/customsearch/v1", params=params)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for item in data.get("items", []):
-                        results.append({
-                            "title": item.get("title", "Online Resource"),
-                            "url": item.get("link", ""),
-                            "source": "Web",
-                            "description": item.get("snippet", ""),
-                        })
-            except Exception:
-                pass
                     
     return results[:max_results]
 
 
-async def search_learning_resources(settings: Settings, query: str, max_results: int = 10) -> list[dict[str, str]]:
-    # Get results from both YouTube and Google in parallel
-    yt_task = _search_youtube_resources(settings, query, max_results=5)
+async def search_learning_resources(settings: Settings, query: str, max_results: int = 12) -> list[dict[str, str]]:
+    # Increase max_results to ensure a rich pool. Google (Coursera/Udemy) is prioritized.
     google_task = _search_google_tutorial_resources(settings, query, max_results=10)
+    yt_task = _search_youtube_resources(settings, query, max_results=6)
     
-    yt_results, google_results = await asyncio.gather(yt_task, google_task)
+    google_results, yt_results = await asyncio.gather(google_task, yt_task)
     
-    # Interleave results to ensure diversity (YT, Google, YT, Google...)
-    combined = []
-    for y, g in zip(yt_results, google_results):
-        combined.append(y)
-        combined.append(g)
-    
-    # Add remaining if lengths differ
-    if len(yt_results) > len(google_results):
-        combined.extend(yt_results[len(google_results):])
-    else:
-        combined.extend(google_results[len(yt_results):])
+    # Prioritize Google/Platform results by putting them first
+    resources = google_results + yt_results
     
     seen = set()
     unique = []
-    for item in combined:
+    for item in resources:
         url = item.get("url")
         if not url or url in seen:
             continue
@@ -341,19 +329,21 @@ async def analyze_job_fit_llm(
     top_gaps_raw = _call_groq(settings, "llama-3.1-8b-instant", gap_prompt, False, 200)
     top_gaps = [g.strip() for g in top_gaps_raw.split(",") if g.strip()]
     
-    # Perform searches for the most critical gaps
-    # We combine them into targeted queries to ensure broad coverage
+    # We perform both targeted gap searches and a broad job-based search for maximum coverage
     search_queries = []
+    
+    # 1. Broad job-based search (restoring the "old" reliable behavior)
+    broad_query = extracted_jd.replace("\n", " ").strip()[:300] or "job preparation"
+    search_queries.append(broad_query)
+
+    # 2. Targeted gap searches
     if top_gaps:
-        # Cover all 5 gaps by grouping them
         for i in range(0, len(top_gaps), 2):
             search_queries.append(" ".join(top_gaps[i:i+2]))
-    else:
-        search_queries.append(extracted_jd[:400].replace("\n", " ").strip())
 
     learning_resources = []
-    # Fetch results for each query in parallel (increase max_results to 12 total pool)
-    fetch_tasks = [search_learning_resources(settings, q, max_results=10) for q in search_queries[:3]]
+    # Fetch results for each query in parallel
+    fetch_tasks = [search_learning_resources(settings, q, max_results=12) for q in search_queries[:4]]
     search_results = await asyncio.gather(*fetch_tasks)
     for results in search_results:
         learning_resources.extend(results)
