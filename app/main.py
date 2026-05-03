@@ -5,6 +5,7 @@ from app.core.config import get_settings
 from app.services.ai_interview.router import router as interview_router
 from app.services.job_description.router import router as job_fit_router
 from app.services.resume_parsing.router import router as resume_router
+from app.services.schedule_parsing.router import router as schedule_router
 
 settings = get_settings()
 origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()] if settings.cors_origins != "*" else ["*"]
@@ -44,6 +45,7 @@ app.add_middleware(
 app.include_router(resume_router, prefix="/v1")
 app.include_router(job_fit_router, prefix="/v1")
 app.include_router(interview_router, prefix="/v1")
+app.include_router(schedule_router, prefix="/v1")
 
 
 @app.get("/health")
