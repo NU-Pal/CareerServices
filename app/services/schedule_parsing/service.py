@@ -53,7 +53,7 @@ def parse_schedule_with_llm(settings: Settings, raw_text: str) -> ParsedSchedule
 
     completion = call_groq_with_fallback(
         settings=settings,
-        model="llama-3.1-70b-versatile",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.0,
         max_tokens=4096,
